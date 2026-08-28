@@ -1,0 +1,152 @@
+# Manifest domain: HRM (tra cuu quy che lao dong)
+#
+# Day la TOAN BO phan phai viet lai khi doi usecase.
+# Bo khung (4 neo x 5 chieu) nam trong code, khong doi.
+# Xem docs/ctx_kernel.md
+#
+# Rang buoc:
+#   - Chi duoc dung 17 o hop le. Ba o bi cam: asker.topic,
+#     dialogue.space, dialogue.time (ctx_kernel.md §2).
+#   - Dung mot o duy nhat duoc mang co `to_query_string`:
+#     target.topic (bat bien I2).
+
+domain: hrm
+version: 1
+consumers: [rag, sql]
+derive: [D1, D2, D3]
+
+# ---------------------------------------------------------------
+# ASKER — nguoi dang hoi. Ben qua doi chu de (ctx_kernel.md §6).
+# ---------------------------------------------------------------
+asker:
+  identity:
+    id:
+      source: session
+      rag: { filter_key: null }          # dinh danh khong loc tai lieu
+      sql: { column: nhan_vien.ma_nv, predicate: "=", row_level_security: true }
+    role:
+      source: user_stated
+      rag: { filter_key: applies_to_role }
+      sql: { column: nhan_vien.vai_tro, predicate: "=" }
+
+  attribute:
+    level:
+      source: external_system
+      rag: { filter_key: applies_to_level, on_empty: demote_to_boost }
+      sql: { column: nhan_vien.cap_bac, predicate: "=" }
+    contract:
+      source: external_system
+      rag: { filter_key: applies_to_contract }
+      sql: { column: nhan_vien.loai_hop_dong, predicate: "=" }
+
+  space:
+    dept:
+      source: external_system
+      multi: true
+      rag: { filter_key: dept, on_empty: demote_to_boost }
+      sql: { column: nhan_vien.phong_ban, predicate: IN }
+
+  time:
+    tenure:
+      source: external_system
+      # Thuoc tinh dan xuat — xem ctx_kernel.md §15, chua chot
+      # luu gia tri da tinh hay tinh luc chieu.
+      derived_from: { column: nhan_vien.ngay_vao_lam }
+      rag: { filter_key: min_tenure_months, op: lte }
+      sql: { column: nhan_vien.ngay_vao_lam, predicate: "<=" }
+
+# ---------------------------------------------------------------
+# TARGET — cai duoc hoi. Theo chu de.
+# Vang target.identity thi ke thua tu asker qua luat D3.
+# ---------------------------------------------------------------
+target:
+  identity:
+    subject:
+      source: user_stated
+      rag: { filter_key: applies_to_role }
+      sql: { column: nhan_vien.vai_tro, predicate: "=" }
+
+  attribute:
+    employee_type:
+      source: user_stated
+      rag: { filter_key: applies_to_contract }
+      sql: { column: nhan_vien.loai_hop_dong, predicate: "=" }
+
+  space:
+    dept:
+      source: user_stated
+      multi: true
+      rag: { filter_key: dept, on_empty: demote_to_boost }
+      sql: { column: nhan_vien.phong_ban, predicate: IN }
+
+  time:
+    period:
+      source: user_stated
+      rag: { via: D1 }                   # khong loc truc tiep; xem §9
+      sql: { column: nghi_phep.ky, predicate: BETWEEN }
+
+  topic:
+    subject:
+      source: retrieved
+      to_query_string: true              # O DUY NHAT mang co nay
+      rag: { filter_key: null }
+      sql: { role: intent_hint }
+
+# ---------------------------------------------------------------
+# SOURCE — noi cau tra loi nam. Theo chu de.
+# source.time va source.space la hai o ma thiet ke viet tay bo sot.
+# ---------------------------------------------------------------
+source:
+  identity:
+    doc:
+      source: retrieved
+      rag: { filter_key: doc_id }
+    section:
+      source: retrieved
+      multi: true
+      rag: { filter_key: section_id }
+    table:
+      source: sql_result
+      sql: { role: table_select }
+
+  attribute:
+    doc_version:
+      source: retrieved
+      rag: { filter_key: doc_version }
+
+  space:
+    applies_to:
+      source: retrieved
+      multi: true
+      # Dung qua luat D2: target.space phai nam trong source.space.
+      rag: { filter_key: doc_scope, via: D2 }
+
+  time:
+    validity:
+      source: retrieved
+      # Dung qua luat D1: phien ban co hieu luc trong ky duoc hoi.
+      rag: { filter_key_from: valid_from, filter_key_to: valid_to, via: D1 }
+
+  topic:
+    covers:
+      source: retrieved
+      rag: { filter_key: doc_topic, mode: boost }
+
+# ---------------------------------------------------------------
+# DIALOGUE — trang thai hoi thoai. Ben, ngu dong qua doi chu de.
+# Chi `verdict` duoc ghi vao day, va chi sinh boost (§7).
+# Khong co space/time: hai o do bi cam (§2).
+# ---------------------------------------------------------------
+dialogue:
+  identity:
+    session:
+      source: session
+  attribute:
+    route:
+      source: verdict                    # rag | sql | both | clarify
+  topic:
+    gap:
+      source: verdict
+      multi: true
+      rag: { mode: boost }
+      sql: { role: intent_hint }

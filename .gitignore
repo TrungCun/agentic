@@ -1,0 +1,11 @@
+/trash
+/storage/log
+.vscode
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/

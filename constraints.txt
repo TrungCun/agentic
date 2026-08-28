@@ -1,0 +1,5 @@
+# constraints.txt
+torch==2.5.1+cu128
+torchvision==0.20.1
+torchaudio==2.5.1
+numpy==1.26.4
